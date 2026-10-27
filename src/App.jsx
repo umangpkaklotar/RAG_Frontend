@@ -1,0 +1,176 @@
+import { Show, SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/react";
+import { useState } from "react";
+
+async function getApiError(response, fallback) {
+  try {
+    const data = await response.json();
+    if (typeof data.detail === "string" && data.detail.trim()) return data.detail;
+    if (Array.isArray(data.detail)) {
+      return data.detail.map(item => item.msg).filter(Boolean).join("; ") || fallback;
+    }
+  } catch {
+    return `${fallback} (HTTP ${response.status})`;
+  }
+  return `${fallback} (HTTP ${response.status})`;
+}
+
+export default function App() {
+  return <main className="page">
+    <header className="site-header"><div className="logo">D</div><div><h1>Document AI</h1><p>Ask questions. Find answers in your files.</p></div><span className="badge">RAG ASSISTANT</span>
+      <Show when="signed-out"><div className="auth-actions">
+        <SignInButton mode="modal"><button className="auth-button">Sign in</button></SignInButton>
+        <SignUpButton mode="modal"><button className="auth-button auth-button-primary">Create account</button></SignUpButton>
+      </div></Show>
+      <Show when="signed-in"><UserButton /></Show>
+    </header>
+    <Show when="signed-out">
+      <section className="signed-out card"><div className="eyebrow">YOUR DOCUMENT WORKSPACE</div><h2>Sign in to get started</h2><p>Sign in or create an account to upload documents and chat with them.</p><SignInButton mode="modal"><button className="primary">Sign in to Document AI</button></SignInButton></section>
+    </Show>
+    <Show when="signed-in"><DocumentWorkspace /></Show>
+  </main>;
+}
+
+function DocumentWorkspace() {
+  const { getToken } = useAuth();
+  const [files, setFiles] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [messages, setMessages] = useState([
+    { role: "assistant", text: "Welcome! Upload documents, then ask a question about their contents." },
+  ]);
+
+  async function upload(event) {
+    event.preventDefault();
+    if (!files.length) {
+      setUploadStatus("Choose at least one file first.");
+      return;
+    }
+    const form = new FormData();
+    files.forEach(file => form.append("files", file));
+    setUploading(true);
+    setUploadStatus("Extracting text and building the search index...");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Your session expired. Sign in again to upload documents.");
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!response.ok) throw new Error(await getApiError(response, "Upload failed"));
+      const data = await response.json();
+      setUploadStatus(
+        `Indexed ${data.sections_and_chunks_indexed} chunks from: ${data.files.join(", ")}. Total vectors: ${data.total_vectors}.`,
+      );
+    } catch (error) {
+      setUploadStatus(`Error: ${error.message}`);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function ask(event) {
+    event.preventDefault();
+    const text = question.trim();
+    if (!text || asking) return;
+    setMessages(old => [...old, { role: "user", text }, { role: "assistant", text: "" }]);
+    setQuestion("");
+    setAsking(true);
+    let answer = "";
+    let sources = [];
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Your session expired. Sign in again to ask questions.");
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question: text }),
+      });
+      if (!response.ok) throw new Error(await getApiError(response, "Question failed"));
+      if (!response.body) throw new Error("The backend did not return an answer stream.");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let streamCompleted = false;
+      const handleBlock = block => {
+        const line = block.split(/\r?\n/).find(item => item.startsWith("data: "));
+        if (!line) return;
+        const eventData = JSON.parse(line.slice(6));
+        if (eventData.type === "token") {
+          answer += eventData.text;
+          setMessages(old => {
+            const copy = [...old];
+            const last = copy.length - 1;
+            if (copy[last]?.role === "assistant") {
+              copy[last] = { ...copy[last], text: answer };
+            }
+            return copy;
+          });
+        } else if (eventData.type === "done") {
+          sources = Array.isArray(eventData.sources) ? eventData.sources : [];
+          streamCompleted = true;
+        } else if (eventData.type === "error") {
+          throw new Error(eventData.message || "The backend could not answer the question.");
+        }
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          buffer += decoder.decode();
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || "";
+        blocks.forEach(handleBlock);
+      }
+      if (buffer.trim()) handleBlock(buffer);
+      if (!streamCompleted) throw new Error("The answer stream ended before it completed.");
+      if (!answer.trim()) throw new Error("The AI service returned an empty answer.");
+      setMessages(old => {
+        const copy = [...old];
+        const last = copy.length - 1;
+        if (copy[last]?.role === "assistant") {
+          copy[last] = { ...copy[last], text: answer, sources };
+        }
+        return copy;
+      });
+    } catch (error) {
+      setMessages(old => {
+        const copy = [...old];
+        const last = copy.length - 1;
+        if (copy[last]?.role === "assistant") {
+          copy[last] = {
+            ...copy[last],
+            text: answer ? `${answer}\n\nError: ${error.message}` : `Error: ${error.message}`,
+            sources,
+          };
+        }
+        return copy;
+      });
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  return <>
+    <section className="hero"><div className="eyebrow">YOUR DOCUMENT WORKSPACE</div><h2>Understand your documents<br/><span>with AI.</span></h2><p>Upload files, find relevant information, and get concise answers grounded in your documents.</p></section>
+    <section className="layout">
+      <aside className="card upload-card"><h3>Upload documents</h3><p className="muted">Select one or more files to index.</p>
+        <form onSubmit={upload}><label className="drop"><input type="file" multiple accept=".pdf,.docx,.txt,.md,.csv" onChange={event => setFiles(Array.from(event.target.files || []))}/><b>＋</b><strong>Choose files</strong><small>PDF, DOCX, TXT, MD, CSV</small></label>
+        {files.length > 0 && <div className="file-list">{files.map(file => <div key={file.name + file.size}>▤ {file.name}</div>)}</div>}
+        <button className="primary" disabled={uploading}>{uploading ? "Indexing documents…" : "Upload and index"}</button></form>
+        {uploadStatus && <pre className="status-text">{uploadStatus}</pre>}<div className="tip">Scanned PDFs need OCR. The current FAISS index is kept in memory and clears when the backend restarts.</div>
+      </aside>
+      <section className="card chat-card"><div className="chat-head"><div><h3>Chat with your documents</h3><p className="muted">Answers stream live from the AI model.</p></div><span className="online">● Online</span></div>
+        <div className="messages">{messages.map((message, index) => <div className={`row ${message.role}`} key={index}><div className="avatar">{message.role === "assistant" ? "D" : "Y"}</div><div className="bubble"><small>{message.role === "assistant" ? "DOCUMENT AI" : "YOU"}</small><div className="msg-text">{message.text}</div>{message.sources?.length > 0 && <div className="sources"><b>Sources</b>{message.sources.map(source => <div key={source}>• {source}</div>)}</div>}</div></div>)}{asking && <div className="thinking">Generating answer…</div>}</div>
+        <form className="ask-form" onSubmit={ask}><input value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ask a question about your documents…"/><button disabled={asking || !question.trim()}>➤</button></form><p className="disclaimer">AI can make mistakes. Verify important information against the source.</p>
+      </section>
+    </section><footer>Document AI · Retrieval-Augmented Generation</footer>
+  </>;
+}
