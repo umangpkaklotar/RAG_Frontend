@@ -1,7 +1,10 @@
 import { Show, SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/react";
 import { useEffect, useState } from "react";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? "https://rag-backend-alpha.vercel.app" : "")
+).replace(/\/+$/, "");
 
 function apiUrl(path) {
   return `${API_BASE_URL}${path}`;
