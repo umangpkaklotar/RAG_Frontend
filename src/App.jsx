@@ -277,7 +277,7 @@ function DocumentWorkspace() {
         <form onSubmit={upload}><label className="drop"><input type="file" multiple accept=".pdf,.docx,.txt,.md,.csv" onChange={event => setFiles(Array.from(event.target.files || []))}/><b>＋</b><strong>Choose files</strong><small>PDF, DOCX, TXT, MD, CSV</small></label>
         {files.length > 0 && <div className="file-list">{files.map(file => <div key={file.name + file.size}>▤ {file.name}</div>)}</div>}
         <button className="primary" disabled={uploading}>{uploading ? "Indexing documents…" : "Upload and index"}</button></form>
-        {uploadStatus && <pre className="status-text">{uploadStatus}</pre>}<div className="tip">Scanned PDFs need OCR. The current FAISS index is kept in memory and clears when the backend restarts.</div>
+        {uploadStatus && <pre className="status-text">{uploadStatus}</pre>}<div className="tip">Scanned PDFs need OCR. The document index is kept in memory and clears when the backend restarts.</div>
         <section className="history-section">
           <h3>Chat History</h3>
           {historyError && <p className="history-error">{historyError}</p>}
