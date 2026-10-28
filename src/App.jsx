@@ -1,6 +1,12 @@
 import { Show, SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/react";
 import { useEffect, useState } from "react";
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
 async function getApiError(response, fallback) {
   try {
     const data = await response.json();
@@ -50,7 +56,7 @@ function DocumentWorkspace() {
   async function apiFetch(url, options = {}) {
     const token = await getToken();
     if (!token) throw new Error("Your session expired. Sign in again.");
-    return fetch(url, {
+    return fetch(apiUrl(url), {
       ...options,
       headers: { ...options.headers, Authorization: `Bearer ${token}` },
     });
@@ -140,7 +146,7 @@ function DocumentWorkspace() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Your session expired. Sign in again to upload documents.");
-      const response = await fetch("/api/upload", {
+      const response = await fetch(apiUrl("/api/upload"), {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -186,7 +192,7 @@ function DocumentWorkspace() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Your session expired. Sign in again to ask questions.");
-      const response = await fetch("/api/ask", {
+      const response = await fetch(apiUrl("/api/ask"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

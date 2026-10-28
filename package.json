@@ -8,6 +8,9 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  },
   "dependencies": {
     "@clerk/react": "^6.18.1",
     "@vitejs/plugin-react": "^4.3.4",
